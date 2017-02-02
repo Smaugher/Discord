@@ -1,3 +1,5 @@
+// I apologize in advance for the unreadable code. :(
+
 const Discord = require('discord.js');
 const DiscordClient = new Discord.Client();
 const fs = require('fs');
@@ -14,6 +16,7 @@ DiscordClient.on('ready', function() {
 });
 
 var streams_r = {};
+var load = {};
 var streams_w = {};
 var vols = {};
 
@@ -52,10 +55,13 @@ DiscordClient.on('message', function(message) {
 						return;
 					}
 
-					var _c = message.guild.voiceConnection
-					if(_c) {
-						if(_c.player) {
-							_c.player.dispatcher.end();
+					if(!(message.guild.id in load)) {
+						load[message.guild.id] = 0;
+					} else {
+						if(load[message.guild.id]) {
+							load[message.guild.id] = 0;
+						} else {
+							load[message.guild.id] = 1;
 						}
 					}
 
@@ -78,9 +84,15 @@ DiscordClient.on('message', function(message) {
 
 					var video = youtubedl(url_parts.toString(), ["--format=bestaudio"]);
 
-					if(message.guild.id in streams_w) { streams_w[message.guild.id].end(); }
-					streams_w[message.guild.id] = fs.createWriteStream('/tmp/' + message.guild.id);
-					video.pipe(streams_w[message.guild.id]);
+					if(message.guild.id in streams_w) {
+						if(streams_w[message.guild.id][load[message.guild.id]]) {
+							streams_w[message.guild.id][load[message.guild.id]].end();	
+						}
+					} else {
+						streams_w[message.guild.id] = {};
+					}
+					streams_w[message.guild.id][load[message.guild.id]] = fs.createWriteStream('/tmp/' + message.guild.id + "_" + load[message.guild.id]);
+					video.pipe(streams_w[message.guild.id][load[message.guild.id]]);
 
 					video.on('info', function(info) {
 						console.log(info.size);
@@ -88,17 +100,32 @@ DiscordClient.on('message', function(message) {
 					});
 
 					video.on('end', function() {
+						var _c = message.guild.voiceConnection
+						if(_c) {
+							if(_c.player) {
+								_c.player.dispatcher.end();
+							}
+						}
+
 						message.guild.channels.find("name", "Music").join()
 							.then(connection => {
-								if(message.guild.id in streams_r) { streams_r[message.guild.id].destroy(); }
-								streams_r[message.guild.id] = fs.createReadStream('/tmp/' + message.guild.id);
+								if(message.guild.id in streams_r) {
+									var old_r = Math.abs(load[message.guild.id] - 1);
+									if(streams_r[message.guild.id][old_r]) {
+										streams_r[message.guild.id][old_r].destroy();
+									}
+								} else {
+									streams_r[message.guild.id] = {};	
+								}
+
+								streams_r[message.guild.id][load[message.guild.id]] = fs.createReadStream('/tmp/' + message.guild.id + "_" + load[message.guild.id]);
 
 								var vol = 1;
 								if(message.guild.id in vols) {
 									vol = Math.min(Math.max(parseInt(vols[message.guild.id]), 0), 100)/100;
 								}
 
-								const dispatcher = connection.playStream(streams_r[message.guild.id], {seek: 0, volume: vol});
+								const dispatcher = connection.playStream(streams_r[message.guild.id][load[message.guild.id]], {seek: 0, volume: vol});
 								dispatcher.passes = 2;
 
 								msg_now.edit(":musical_note: Playing *" + curplaying.join("/") + "*");
